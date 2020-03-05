@@ -1,0 +1,6 @@
+/data/
+/runs/
+/results/
+*.pyc
+*.pth
+*.pth.tar
