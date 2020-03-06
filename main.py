@@ -28,11 +28,12 @@ args = parser.parse_args()
 
 classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 
-trial_id = -1 # id of optuna
+trial_id = -1 # trial id of optuna
 best_accuracy = 0.0 # best valid accuracy of optuna trials
 best_id = -1 # best id of optuna
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 def main():
     if not os.path.isdir(args.path_of_results):
@@ -42,15 +43,13 @@ def main():
         current_time = datetime.now().strftime('%b%d_%Y_%Hh%Mm%Ss')
         log_dir = os.path.join('runs', current_time)
 
-        # init SummaryWriter of tensorboard. Writer will ouput to ./runs/ directory by default.
+        # Init SummaryWriter of tensorboard. Writer will ouput to ./runs/ directory by default.
         writer = SummaryWriter(log_dir=log_dir)
 
-        # add args states to writer.
+        # Add args states to writer.
         writer.add_text('args', str(args), 0)
 
     writer = writer if args.tensorboard else None
-
-    # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     transform = transforms.Compose(
         [transforms.ToTensor(),
@@ -68,9 +67,6 @@ def main():
     testloader  = torch.utils.data.DataLoader(testset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
 
     # check train and test images
-    # checkimages(trainloader, writer, device, mode='train')
-    # checkimages(validloader, writer, device, mode='valid')
-    # checkimages(testloader, writer, device, mode='test')
     checkimages(trainloader, writer, mode='train')
     checkimages(validloader, writer, mode='valid')
     checkimages(testloader, writer, mode='test')
@@ -101,11 +97,10 @@ def main():
         net = network.Net().to(device)
         criterion = nn.CrossEntropyLoss()
         optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
-        # train(net, trainloader, validloader, device, optimizer, criterion, writer, trial_id)
         train(net, trainloader, validloader, optimizer, criterion, writer, trial_id)
 
     # Evaluate best net using test data
-    best_net= network.Net().to(device)
+    best_net = network.Net().to(device)
     best_net.load_state_dict(torch.load(args.path_of_results + '/best_net_{:03d}'.format(best_id) + '.pth.tar'))
 
     # Read test data
@@ -113,14 +108,14 @@ def main():
     images, labels = dataiter.next()
     del dataiter
 
-    # Compare groundtruth to predicted using only 4 images
+    # Compare groundtruth to predicted
     outputs = best_net(images.to(device))
     _, predicted = torch.max(outputs, 1)
-    print('GroundTruth: ', ' '.join('%5s' % classes[labels[j]] for j in range(4)))
-    print('Predicted: ', ' '.join('%5s' % classes[predicted[j]] for j in range(4)))
+    print('GroundTruth: ', ' '.join('%5s' % classes[labels[j]] for j in range(args.batch_size)))
+    print('Predicted: ', ' '.join('%5s' % classes[predicted[j]] for j in range(args.batch_size)))
 
     # Evaluate
-    test_accuracy, test_accuracy_of_classes = evaluate(best_net, testloader, writer, 'test', best_id)
+    test_accuracy, test_accuracy_of_classes = evaluate(best_net, testloader, 'test', best_id)
     print('Test accuracy of best net : {:.3f}'.format(test_accuracy))
 
     if args.tensorboard:
@@ -133,8 +128,7 @@ def main():
         writer.close()
 
 
-# def checkimages(loader, writer, device, mode='Train'):
-def checkimages(loader, writer, mode='Train'):
+def checkimages(loader, writer, mode='train'):
     dataiter = iter(loader)
     images, labels = dataiter.next()
 
@@ -147,14 +141,13 @@ def checkimages(loader, writer, mode='Train'):
         grid = torchvision.utils.make_grid(images)
         writer.add_image('Images/{}'.format(mode), grid/2 + 0.5, 0)
 
-        if train:
+        if mode == 'train':
             net = network.Net().to(device)
             writer.add_graph(net, images.to(device))
 
     del dataiter
 
 
-# def train(net, trainloader, validloader, device, optimizer, criterion, writer, trial_id):
 def train(net, trainloader, validloader, optimizer, criterion, writer, trial_id):
     best_valid_accuracy = 0.0
     print('trial id : {}'.format(trial_id))
@@ -181,13 +174,12 @@ def train(net, trainloader, validloader, optimizer, criterion, writer, trial_id)
         torch.save(net.state_dict(), args.path_of_results + '/checkpoint.pth.tar')
 
         for i, data in enumerate(validloader, 0):
-            # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data
             outputs = net(inputs.to(device))
             loss = criterion(outputs, labels.to(device))
             valid_loss.update(loss.item(), args.batch_size)
 
-        valid_accuracy, valid_accuracy_of_classes = evaluate(net, validloader, writer, 'valid', trial_id)
+        valid_accuracy, valid_accuracy_of_classes = evaluate(net, validloader, 'valid', trial_id)
 
         if valid_accuracy >= best_valid_accuracy:
             best_valid_accuracy = valid_accuracy
@@ -206,10 +198,18 @@ def train(net, trainloader, validloader, optimizer, criterion, writer, trial_id)
 
             writer.flush()
 
+    if args.tensorboard:
+        writer.add_scalars('Accuracy/valid/all', {'trial_{:03d}'.format(trial_id): valid_accuracy}, 0)
+
+        for i in range(10):
+            writer.add_scalars('Accuracy/valid/classes', {'trial_{:03d}'.format(trial_id): valid_accuracy_of_classes[i]}, i)
+
+        writer.flush()
+
     global best_accuracy
     if best_valid_accuracy >= best_accuracy:
         best_accuracy = best_valid_accuracy
-        global best_id 
+        global best_id
         best_id = trial_id
 
     print('best_valid_accuracy of this trial: {:.3f}'.format(best_valid_accuracy))
@@ -220,9 +220,11 @@ def train(net, trainloader, validloader, optimizer, criterion, writer, trial_id)
     return best_valid_accuracy
 
 
-def evaluate(net, dataloader, writer, mode, trial_id):
+def evaluate(net, dataloader, mode, trial_id):
     correct = 0
     total = 0
+    class_correct = list(0. for i in range(10))
+    class_total = list(0. for i in range(10))
 
     with torch.no_grad():
         for data in dataloader:
@@ -231,37 +233,20 @@ def evaluate(net, dataloader, writer, mode, trial_id):
             _, predicted = torch.max(outputs.to('cpu').data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
-
-    accuracy = 100 * correct / total
-    print('Accuracy of the network: {:.3f}'.format(accuracy))
-
-    class_correct = list(0. for i in range(10))
-    class_total = list(0. for i in range(10))
-
-    with torch.no_grad():
-        for data in dataloader:
-            images, labels = data
-            outputs = net(images.to(device))
-            _, predicted = torch.max(outputs.to('cpu'), 1)
             c = (predicted == labels).squeeze()
             for i in range(4):
                 label = labels[i]
                 class_correct[label] += c[i].item()
                 class_total[label] += 1
 
+    accuracy = 100 * correct / total
+    print('Accuracy of the network : {:.3f}'.format(accuracy))
+
     accuracy_of_classes = []
     for i in range(10):
         accuracy_of_class = 100 * class_correct[i] / class_total[i]
         accuracy_of_classes.append(accuracy_of_class)
-        print('Accuracy of %5s : %2d %%' % (classes[i], accuracy_of_class))
-
-        # print('Accuracy of %5s : %2d %%' % (
-        #     classes[i], 100 * class_correct[i] / class_total[i]))
-
-        # if args.tensorboard: writer.add_scalar('Accuracy/test/classes', 100 * class_correct[i] / class_total[i], i)
-        # if args.tensorboard:
-        #     writer.add_scalars('Accuracy/{}/classes'.format(mode), {'trial_{:03d}'.format(trial_id): 100 * class_correct[i] / class_total[i]}, i)
-        #     writer.flush()
+        print('Accuracy of {} : {:.3f}'.format(classes[i], accuracy_of_class))
 
     return accuracy, accuracy_of_classes
 
@@ -290,15 +275,14 @@ def get_optimizer(trial, model):
 
 def objective_variable(trainloader, validloader, writer):
     def objective(trial):
-        # device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        global trial_id
+        trial_id += 1
+
         model = network.Net().to(device)
         optimizer = get_optimizer(trial, model)
         criterion = nn.CrossEntropyLoss()
 
-        global trial_id
-        trial_id += 1
         # Training
-        # valid_accuracy = train(model, trainloader, validloader, device, optimizer, criterion, writer, trial_id)
         valid_accuracy = train(model, trainloader, validloader, optimizer, criterion, writer, trial_id)
 
         # Hyperparameter tuning will be done as return become max, since this code use direction='maximize'.
