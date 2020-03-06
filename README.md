@@ -15,7 +15,7 @@ tensorboard
 future  
 optuna  
 
-## How to run trainig
+## How to run training
 ```
 $ python main.py # for training and evaluation
 ```
