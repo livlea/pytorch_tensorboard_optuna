@@ -199,7 +199,7 @@ def train(net, trainloader, validloader, optimizer, criterion, writer, trial_num
             writer.flush()
 
     if args.tensorboard:
-        writer.add_scalars('Accuracy/valid/all', {'trial_{:03d}'.format(trial_num): valid_accuracy}, trial_num)
+        writer.add_scalars('Accuracy/valid/all', {'trial_{:03d}'.format(trial_num): best_valid_accuracy}, trial_num)
 
         for i in range(10):
             writer.add_scalars('Accuracy/valid/classes', {'trial_{:03d}'.format(trial_num): valid_accuracy_of_classes[i]}, i)
